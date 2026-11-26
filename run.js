@@ -60,36 +60,37 @@ async function main() {
   if (process.env.SEND_TEST === 'true') await send('✅ Test message from your POI zone alerts. Telegram is set up correctly.');
   const api = await connect();
   const codes = await resolveCodes(api, WATCHLIST); api.close();
-  const errors = [], msgs = []; let ok = 0;
+  const errors = [], msgs = [], missing = [], loading = []; let ok = 0;
   const queue = WATCHLIST.slice();
   async function worker() {
     const a = await connect();
     try {
       while (queue.length) {
         const tv = queue.shift();
-        if (!codes[tv]) { errors.push(`${short(tv)}: not found on Deriv`); continue; }
+        if (!codes[tv]) { missing.push(short(tv)); continue; }
         try {
           const bars = await loadSymbol(a, codes[tv], now);
           const zones = allZones(bars).filter(z => ALERT_TFS.includes(z.tf) && (ALERT_FLIPPED || !z.fl));
           const st = state.sym[tv] || (state.sym[tv] = {});
-          for (const e of check(bars, zones, st, now)) msgs.push(message(tv, e));
+          if (bars.full) for (const e of check(bars, zones, st, now)) msgs.push(message(tv, e));   // only once the history is complete
+          else loading.push(short(tv));
           ok++;
         } catch (e) { errors.push(`${short(tv)}: ${e.message}`); }
       }
     } finally { a.close(); }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  await Promise.all([worker(), worker()]);
   for (const m of msgs) await send(m);
   // daily "still running" message: the first run after 06:00 Windhoek time
   const day = new Date((now + LOCAL) * 1000).toISOString().slice(0, 10), hour = new Date((now + LOCAL) * 1000).getUTCHours();
   if (hour >= 6 && state.heartbeat !== day) {
-    await send(`✅ POI alerts running. Watching ${ok} of ${WATCHLIST.length} instruments.` + (errors.length ? `\nProblems: ${errors.join('; ')}` : ''));
+    await send(`✅ POI alerts running. Watching ${ok} of ${WATCHLIST.length} instruments.` + (missing.length ? `\nNot on Deriv's public data feed: ${missing.join(', ')}` : '') + (errors.length ? `\nProblems: ${errors.join('; ')}` : ''));
     state.heartbeat = day;
   }
   if (ok === 0 && (!state.lastError || now - state.lastError > 7200)) {
     await send(`❌ POI alerts could not read any data: ${errors.slice(0, 3).join('; ')}`); state.lastError = now;
   }
   fs.writeFileSync(STATE, JSON.stringify(state));
-  console.log(`done: ${ok} ok, ${msgs.length} alerts, errors: ${errors.join('; ')}`);
+  console.log(`done: ${ok} ok, still loading history: ${loading.join(', ')}, ${msgs.length} alerts, missing: ${missing.join(', ')}, errors: ${errors.join('; ')}`);
 }
 main().catch(e => { console.error(e); process.exit(1); });
