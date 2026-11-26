@@ -101,31 +101,41 @@ async function resolveCodes(api, tvList) {
 // only asks Deriv for the newest candles; the old history is filled in one page per run (Deriv rate limits).
 const fs = require('fs'), path = require('path');
 const CACHE = path.join(__dirname, 'cache');
-const HIST_PAGES = 7;                               // about 4 years of 1H candles for the Weekly / Daily
-async function loadSymbol(api, code, now = Date.now() / 1000) {
+// Deriv only gives 1 year of history, so older Weekly candles come from a one-time TradingView export
+const SEED = {};
+try {   // format: { symbol: { t0: first week start, o: "open,high,low,close;..." } } - week times are rebuilt with key()
+  const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'seed_weekly.json'), 'utf8'));
+  for (const [tv, s] of Object.entries(raw)) {
+    let t = s.t0;
+    SEED[tv] = s.o.split(';').map((row, i) => { if (i) t = key(t + 7 * 86400 + 7200, '1W'); return [t, ...row.split(',').map(Number)]; });
+  }
+} catch (e) { console.log('no weekly seed', e.message); }
+async function loadSymbol(api, code, now = Date.now() / 1000, tv = '') {
   if (!fs.existsSync(CACHE)) fs.mkdirSync(CACHE);
   const file = path.join(CACHE, code + '.json');
   let c = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { h1: [], full: false };
-  let h1 = c.h1;
-  const fresh = await candles(api, code, 3600, h1.length ? 200 : 5000);
-  const last = h1.length ? h1[h1.length - 1][0] : 0;
-  h1 = h1.filter(b => b[0] < (fresh[0] ? fresh[0][0] : Infinity)).concat(fresh);
-  if (!c.full && h1.length) {                       // one older page per run until the history is complete
-    const older = await candles(api, code, 3600, 5000, h1[0][0] - 1);
-    if (older.length < 10 || h1.length + older.length >= HIST_PAGES * 5000) c.full = true;
-    h1 = older.concat(h1);
+  // Deriv returns at most 2000 candles per request and about 1 year of 1H history; pages can overlap, so
+  // candles are merged by time, kept only on whole hours, and sorted.
+  const merge = (...lists) => [...new Map(lists.flat().filter(b => b[0] % 3600 === 0).map(b => [b[0], b])).values()].sort((a, b) => a[0] - b[0]);
+  let h1 = merge(c.h1);
+  h1 = merge(h1, await candles(api, code, 3600, h1.length ? 200 : 2000));
+  if (!c.full && h1.length) {                       // one older page per run until Deriv has nothing older
+    const first = h1[0][0];
+    h1 = merge(await candles(api, code, 3600, 2000, first - 1), h1);
+    if (h1[0][0] >= first) c.full = true;
   }
-  const seen = new Set(); h1 = h1.filter(b => !seen.has(b[0]) && seen.add(b[0])).sort((a, b) => a[0] - b[0]);
   fs.writeFileSync(file, JSON.stringify({ h1, full: c.full }));
   const m15 = await candles(api, code, 900, 400);
   const m5 = await candles(api, code, 300, 300);
-  const closed = (b, s) => b.filter(x => x[0] + s <= now);
+  const closed = (b, s) => b.filter(x => x[0] + s <= now).sort((a, b) => a[0] - b[0]);
   const h1c = closed(h1, 3600);
   const bars = {
     W: aggregate(h1c, '1W'), D: aggregate(h1c, '1D'), '4H': aggregate(h1c, '240'), '1H': h1c,
     '15m': closed(m15, 900), '5m': closed(m5, 300),
   };
   // the Weekly / Daily / 4H candle that is still forming must not count
+  bars.W = bars.W.slice(1); bars.D = bars.D.slice(1);   // the first week / day of the history is only partly there
+  if (SEED[tv] && bars.W.length) bars.W = SEED[tv].filter(w => w[0] < bars.W[0][0]).concat(bars.W);
   bars.W = bars.W.filter(b => key(now, '1W') !== b[0]);
   bars.D = bars.D.filter(b => key(now, '1D') !== b[0]);
   bars['4H'] = bars['4H'].filter(b => key(now, '240') !== b[0]);
