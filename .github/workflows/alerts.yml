@@ -1,0 +1,39 @@
+name: POI zone alerts
+on:
+  workflow_dispatch:          # started every 5 minutes by cron-job.org
+    inputs:
+      test:
+        description: 'Send a Telegram test message'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '*/10 * * * *'    # backup only - GitHub often starts these late
+permissions:
+  contents: write
+concurrency:
+  group: alerts
+  cancel-in-progress: false
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check every instrument
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SEND_TEST: ${{ github.event.inputs.test }}
+        run: node run.js
+      - name: Save what was already sent
+        if: always()
+        run: |
+          git config user.name "poi-alerts"
+          git config user.email "poi-alerts@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "alerts state"
+          git pull --rebase -X theirs || true
+          git push || true
