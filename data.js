@@ -59,14 +59,19 @@ function connect() {
   });
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function candles(api, code, gran, count, end = 'latest') {
-  const d = await api.call({ ticks_history: code, style: 'candles', granularity: gran, count, end });
+  let d;
+  for (let k = 0; ; k++) {
+    try { await sleep(250); d = await api.call({ ticks_history: code, style: 'candles', granularity: gran, count, end }); break; }
+    catch (e) { if (k < 3 && /rate limit/i.test(e.message)) { await sleep(15000); continue; } throw e; }
+  }
   return (d.candles || []).map(c => [c.epoch, +c.open, +c.high, +c.low, +c.close]);
 }
 
 // Deriv code for each TradingView symbol (found by name, so new indices work too)
 const NAMES = {
-  STEP_INDEX: /^Step Index$/i, BOOM_500_INDEX: /^Boom 500 Index$/i, XAUUSD: /^(Gold\/USD|XAU\/USD)$/i,
+  STEP_INDEX: /^Step Index( 100)?$/i, BOOM_500_INDEX: /^Boom 500 Index$/i, XAUUSD: /^(Gold\/USD|XAU\/USD)$/i,
 };
 function nameFor(tv) {
   if (NAMES[tv]) return NAMES[tv];
@@ -92,17 +97,28 @@ async function resolveCodes(api, tvList) {
   return out;
 }
 
-// all candles one symbol needs (closed candles only, except '5m live' which includes the forming one)
+// all candles one symbol needs. 1H history is kept in a cache (cache/<code>.json) between runs, so each run
+// only asks Deriv for the newest candles; the old history is filled in one page per run (Deriv rate limits).
+const fs = require('fs'), path = require('path');
+const CACHE = path.join(__dirname, 'cache');
+const HIST_PAGES = 7;                               // about 4 years of 1H candles for the Weekly / Daily
 async function loadSymbol(api, code, now = Date.now() / 1000) {
-  let h1 = await candles(api, code, 3600, 5000);
-  for (let p = 0; p < 6 && h1.length; p++) {       // about 4 years of 1H history for the Weekly / Daily
+  if (!fs.existsSync(CACHE)) fs.mkdirSync(CACHE);
+  const file = path.join(CACHE, code + '.json');
+  let c = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { h1: [], full: false };
+  let h1 = c.h1;
+  const fresh = await candles(api, code, 3600, h1.length ? 200 : 5000);
+  const last = h1.length ? h1[h1.length - 1][0] : 0;
+  h1 = h1.filter(b => b[0] < (fresh[0] ? fresh[0][0] : Infinity)).concat(fresh);
+  if (!c.full && h1.length) {                       // one older page per run until the history is complete
     const older = await candles(api, code, 3600, 5000, h1[0][0] - 1);
-    if (!older.length) break;
+    if (older.length < 10 || h1.length + older.length >= HIST_PAGES * 5000) c.full = true;
     h1 = older.concat(h1);
   }
-  const seen = new Set(); h1 = h1.filter(b => !seen.has(b[0]) && seen.add(b[0]));
-  const m15 = await candles(api, code, 900, 3000);
-  const m5 = await candles(api, code, 300, 1500);
+  const seen = new Set(); h1 = h1.filter(b => !seen.has(b[0]) && seen.add(b[0])).sort((a, b) => a[0] - b[0]);
+  fs.writeFileSync(file, JSON.stringify({ h1, full: c.full }));
+  const m15 = await candles(api, code, 900, 400);
+  const m5 = await candles(api, code, 300, 300);
   const closed = (b, s) => b.filter(x => x[0] + s <= now);
   const h1c = closed(h1, 3600);
   const bars = {
@@ -114,7 +130,8 @@ async function loadSymbol(api, code, now = Date.now() / 1000) {
   bars.D = bars.D.filter(b => key(now, '1D') !== b[0]);
   bars['4H'] = bars['4H'].filter(b => key(now, '240') !== b[0]);
   bars['4H'] = bars['4H'].slice(-3800); bars['1H'] = bars['1H'].slice(-6300);   // same history length as TradingView
-  bars.live = m5;                                  // includes the forming 5m candle (live price)
+  bars.live = m5;                                   // includes the forming 5m candle (live price)
+  bars.full = c.full;
   return bars;
 }
 
