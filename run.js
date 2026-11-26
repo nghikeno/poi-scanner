@@ -69,7 +69,7 @@ async function main() {
         const tv = queue.shift();
         if (!codes[tv]) { missing.push(short(tv)); continue; }
         try {
-          const bars = await loadSymbol(a, codes[tv], now);
+          const bars = await loadSymbol(a, codes[tv], now, tv);
           const zones = allZones(bars).filter(z => ALERT_TFS.includes(z.tf) && (ALERT_FLIPPED || !z.fl));
           const st = state.sym[tv] || (state.sym[tv] = {});
           if (bars.full) for (const e of check(bars, zones, st, now)) msgs.push(message(tv, e));   // only once the history is complete
