@@ -14,8 +14,8 @@ const WATCHLIST = [
 ];
 const STATE = path.join(__dirname, 'state.json');
 const LOCAL = 2 * 3600;                                    // Windhoek time (UTC+2)
-// which zones give APPROACHING / TOUCH / W-M / BROKEN alerts (1H zones still show as "also 1H" on bigger zones)
-const ALERT_TFS = (process.env.ALERT_TFS || 'W,D,4H').split(',');
+// which zones give APPROACHING / TOUCH / W-M / BROKEN alerts: Weekly, Daily, 4H and 1H (no alerts for 15m zones)
+const ALERT_TFS = (process.env.ALERT_TFS || 'W,D,4H,1H').split(',');
 const ALERT_FLIPPED = process.env.ALERT_FLIPPED === 'true';
 
 const short = tv => tv.replace(/^VOLATILITY_(\d+)_1S_INDEX$/, 'V$1(1s)').replace(/^VOLATILITY_(\d+)_INDEX$/, 'V$1')
