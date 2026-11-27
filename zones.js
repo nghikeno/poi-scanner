@@ -95,7 +95,7 @@ function structureZones(b, opt) {
       const g = gH[q], p = g.p[0];
       let zt = H(p); for (const m of g.p) if (Math.abs(H(m) - H(p)) <= a1 && H(m) > zt) zt = H(m);
       const zb = Math.min(bt3(p), zt - 0.05 * a1);
-      if (p < NN - lookN || zb > cl || zb < rLo - 0.25 * a1 || zt > rHi) continue;
+      if (p < NN - lookN || zb > cl || zb < rLo - 0.25 * a1 || zt > (fsup ? fsup.bot : Infinity)) continue;   // stays below the fresh supply
       if (best && zt <= best.top) continue;   // nearest to price
       if (fdem && fdem.top >= zb && fdem.bot <= zt) continue;
       let ok = true; for (let k = g.i; k < NN; k++) if (C(k) < zb - 0.25 * a1) { ok = false; break; }
@@ -108,7 +108,7 @@ function structureZones(b, opt) {
       const g = gL[q], p = g.p[0];
       let zb = L(p); for (const m of g.p) if (Math.abs(L(m) - L(p)) <= a1 && L(m) < zb) zb = L(m);
       const zt = Math.max(bb3(p), zb + 0.05 * a1);
-      if (p < NN - lookN || zt < cl || zt > rHi + 0.25 * a1 || zb < rLo) continue;
+      if (p < NN - lookN || zt < cl || zt > rHi + 0.25 * a1 || zb < (fdem ? fdem.top : -Infinity)) continue;   // stays above the fresh demand
       if (best && zb >= best.bot) continue;   // nearest to price
       if (fsup && fsup.top >= zb && fsup.bot <= zt) continue;
       let ok = true; for (let k = g.i; k < NN; k++) if (C(k) > zt + 0.25 * a1) { ok = false; break; }
