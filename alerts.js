@@ -17,7 +17,8 @@ function wm(z, E, touchT, tol) {
   if (s < 0 || E.length < 6) return null;
   const last = E.length - 1, d = z.kind;
   const low = i => d === 1 ? E[i][3] : -E[i][2], high = i => d === 1 ? E[i][2] : -E[i][3], close = i => d === 1 ? E[i][4] : -E[i][4];
-  const atZone = i => d === 1 ? E[i][3] <= z.top + tol : E[i][2] >= z.bot - tol;
+  // both bottoms (tops) must form AT the zone: inside it or touching it, not far beyond it
+  const atZone = i => d === 1 ? (E[i][3] <= z.top + tol && E[i][3] >= z.bot - tol) : (E[i][2] >= z.bot - tol && E[i][2] <= z.top + tol);
   const piv = [];
   for (let i = Math.max(s, 1); i <= last - 2; i++)
     if (low(i) < low(i - 1) && low(i) <= low(i + 1) && low(i) <= low(i + 2) && atZone(i)) piv.push(i);
@@ -79,7 +80,9 @@ function check(bars, zones, st, now) {
           const tp = target(z, bars[z.tf], zones, r.entry);
           const risk = Math.abs(r.entry - r.stop);
           const rr = tp != null && risk ? Math.abs(tp - r.entry) / risk : null;
-          if (rr != null && rr >= 1) ev.push({ type: 'wm', z, ...r, tp, rr, trend: trend(bars[z.tf]) });   // minimum 1R (hard rule)
+          const tr = trend(bars[z.tf]);
+          // only setups that pass the rules: with the zone timeframe's trend, at least 1R, and (4H) target within 4R
+          if (rr != null && rr >= 1 && tr === z.kind && !(z.tf === '4H' && rr > 4)) ev.push({ type: 'wm', z, ...r, tp, rr, trend: tr });
         }
       }
     }
