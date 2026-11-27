@@ -88,9 +88,9 @@ function check(bars, zones, st, now) {
     }
     cur[id] = { ...s, top: z.top, bot: z.bot, kind: z.kind, tf: z.tf, fl: z.fl, t: z.t, seen: now };
   }
-  // fresh Weekly / Daily / 4H zones that disappeared because a candle closed through them
+  // fresh Weekly / Daily / 4H / 1H zones that disappeared because a candle closed through them
   for (const [id, s] of Object.entries(cur)) {
-    if (ids.has(id) || s.broken || s.fl || s.tf === '1H' || s.seen !== st.lastRun) continue;
+    if (ids.has(id) || s.broken || s.fl || s.seen !== st.lastRun) continue;
     const Z = bars[s.tf]; const c = Z && Z.length ? Z[Z.length - 1][4] : price;
     if ((s.kind === 1 && c < s.bot) || (s.kind === -1 && c > s.top)) { s.broken = true; ev.push({ type: 'broken', z: s, price: c }); }
   }
