@@ -101,7 +101,21 @@ function structureZones(b, { ext = false, flips = false, n = 2, minBars = 52 } =
   return out;
 }
 
-// trend of a timeframe, as in the indicator: last two swing highs and lows (2 candles each side)
+// direction of the latest structure break: +1 = the last break was a close above a swing high, -1 = below a swing low
+function lastBreak(b, n = 2) {
+  let uh = [], ul = [], iU = -1, iD = -1;
+  for (let i = 2 * n; i < b.length; i++) {
+    const c = b[i][4];
+    if (uh.some(p => b[p][2] < c)) { iU = i; uh = uh.filter(p => b[p][2] >= c); }
+    if (ul.some(p => b[p][3] > c)) { iD = i; ul = ul.filter(p => b[p][3] <= c); }
+    const p = i - n; let sh = true, sl = true;
+    for (let k = p - n; k <= p + n; k++) { if (k === p) continue; if (b[k][2] >= b[p][2]) sh = false; if (b[k][3] <= b[p][3]) sl = false; }
+    if (sh) uh.push(p); if (sl) ul.push(p);
+  }
+  return iU > iD ? 1 : iD > iU ? -1 : 0;
+}
+
+// trend of a timeframe: last two swing highs and lows (2 candles each side) AND the latest structure break must agree
 function trend(b, n = 2) {
   const hi = [], lo = [];
   for (let p = n; p < b.length - n; p++) {
@@ -111,7 +125,8 @@ function trend(b, n = 2) {
   }
   if (hi.length < 2 || lo.length < 2) return 0;
   const hh = hi.at(-1) > hi.at(-2), hl = lo.at(-1) > lo.at(-2), lh = hi.at(-1) < hi.at(-2), ll = lo.at(-1) < lo.at(-2);
-  return hh && hl ? 1 : lh && ll ? -1 : 0;
+  const br = lastBreak(b, n);
+  return hh && hl && br === 1 ? 1 : lh && ll && br === -1 ? -1 : 0;
 }
 
 // all four timeframes, with the indicator's overlap rule (higher timeframe kept, tagged "also 4H")
@@ -127,4 +142,4 @@ function allZones(bars) {        // bars = { W:[], D:[], '4H':[], '1H':[] }
   return zs.filter(z => !z.hidden);
 }
 
-if (typeof module !== 'undefined') module.exports = { atr, structureZones, trend, allZones };
+if (typeof module !== 'undefined') module.exports = { atr, structureZones, trend, lastBreak, allZones };
