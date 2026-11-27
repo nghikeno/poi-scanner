@@ -15,35 +15,44 @@ function atr(b, n = 14) {            // TradingView ta.atr (RMA of true range, s
 }
 
 // ext = true for the Weekly (newer zone = extreme of the whole latest movement)
-// flips = true for 4H and 1H (broken swings now being retested)
-function structureZones(b, { ext = false, flips = false, n = 2, minBars = 52 } = {}) {
-  const NN = b.length;
-  if (NN < minBars || NN <= 4 * n) return [];
-  const a1 = atr(b);
+// FLIPPED zones (every timeframe): a swing broken by a candle CLOSE flips (old high -> demand, old low -> supply).
+// Swings broken by the same candle and within 1 ATR of the newest one form one zone: furthest wick to the body edge
+// of the newest swing. Shown only if never closed back through (0.25 ATR), inside the current range (between the
+// fresh supply and fresh demand; no limit on a side without one), not on the fresh zone, swing within the last 100
+// candles, and per side only the one nearest to price.
+function structureZones(b, opt) {
+  const ext = !!(opt && opt.ext), flips = !(opt && opt.flips === false), n = 2, minBars = 52, lookN = (opt && opt.lookN) || 100;
+  const NN = b.length, out = [];
+  if (NN < minBars || NN <= 4 * n) return out;
+  // ATR (RMA 14) of closed candles
+  let a1 = null, sum = 0;
+  for (let i = 0; i < NN; i++) {
+    const t = i === 0 ? b[i][2] - b[i][3] : Math.max(b[i][2] - b[i][3], Math.abs(b[i][2] - b[i - 1][4]), Math.abs(b[i][3] - b[i - 1][4]));
+    if (i < 14) { sum += t; if (i === 13) a1 = sum / 14; } else a1 = (a1 * 13 + t) / 14;
+  }
+  if (!(a1 > 0)) return out;
   const H = i => b[i][2], L = i => b[i][3], C = i => b[i][4], O = i => b[i][1], T = i => b[i][0];
-  let uh = [], ul = [], bkH = [], bkL = [], minH = null, maxL = null;
-  let iU = -1, pU = -1, iD = -1, pD = -1;
+  const uh = [], ul = [], gH = [], gL = [];   // gH/gL: breaks = { i: break candle, p: [broken swings, newest first] }
+  let minH = null, maxL = null, iU = -1, iD = -1;
   for (let i = 2 * n; i < NN; i++) {
     const c = C(i);
     if (minH !== null && c > minH) {
-      iU = i; pU = -1; minH = null;
+      iU = i; minH = null; const g = [];
       for (let q = uh.length - 1; q >= 0; q--) {
         const pq = uh[q];
-        if (H(pq) < c) {
-          if (pU < 0) { pU = pq; bkH.push([pq, i]); if (bkH.length > 8) bkH.shift(); }
-          uh.splice(q, 1);
-        } else if (minH === null || H(pq) < minH) minH = H(pq);
+        if (H(pq) < c) { g.push(pq); uh.splice(q, 1); }
+        else if (minH === null || H(pq) < minH) minH = H(pq);
       }
+      if (g.length) { gH.push({ i, p: g }); if (gH.length > 300) gH.shift(); }
     }
     if (maxL !== null && c < maxL) {
-      iD = i; pD = -1; maxL = null;
+      iD = i; maxL = null; const g = [];
       for (let q = ul.length - 1; q >= 0; q--) {
         const pq = ul[q];
-        if (L(pq) > c) {
-          if (pD < 0) { pD = pq; bkL.push([pq, i]); if (bkL.length > 8) bkL.shift(); }
-          ul.splice(q, 1);
-        } else if (maxL === null || L(pq) > maxL) maxL = L(pq);
+        if (L(pq) > c) { g.push(pq); ul.splice(q, 1); }
+        else if (maxL === null || L(pq) > maxL) maxL = L(pq);
       }
+      if (g.length) { gL.push({ i, p: g }); if (gL.length > 300) gL.shift(); }
     }
     const p = i - n; let sh = true, sl = true;
     for (let k = p - n; k <= p + n; k++) {
@@ -62,44 +71,54 @@ function structureZones(b, { ext = false, flips = false, n = 2, minBars = 52 } =
     else if (iU > iD && sI >= 0) { dI = sI; for (let k = sI; k <= iU; k++) if (L(k) < L(dI)) dI = k; }
   }
   const bodyTop = k => Math.max(O(k), C(k)), bodyBot = k => Math.min(O(k), C(k));
-  const out = [];
+  const bt3 = k => Math.max(bodyTop(Math.max(k - 1, 0)), bodyTop(k), bodyTop(Math.min(k + 1, NN - 1)));
+  const bb3 = k => Math.min(bodyBot(Math.max(k - 1, 0)), bodyBot(k), bodyBot(Math.min(k + 1, NN - 1)));
+  let fsup = null, fdem = null;
   if (sI >= 0) {
-    const zt = H(sI), k0 = Math.max(sI - 1, 0), k1 = Math.min(sI + 1, NN - 1);
-    const zb = Math.min(Math.max(bodyTop(k0), bodyTop(sI), bodyTop(k1)), zt - 0.05 * a1);
-    let ok = true; for (let k = sI + 1; k < NN; k++) if (C(k) > zt + 0.25 * a1) ok = false;
-    if (ok) out.push({ top: zt, bot: zb, kind: -1, t: T(sI), fl: false });
+    const zt = H(sI), zb = Math.min(bt3(sI), zt - 0.05 * a1);
+    let ok = true; for (let k = sI + 1; k < NN; k++) if (C(k) > zt + 0.25 * a1) { ok = false; break; }
+    if (ok) { fsup = { top: zt, bot: zb, kind: -1, t: T(sI), fl: false }; out.push(fsup); }
   }
   if (dI >= 0) {
-    const zb = L(dI), k0 = Math.max(dI - 1, 0), k1 = Math.min(dI + 1, NN - 1);
-    const zt = Math.max(Math.min(bodyBot(k0), bodyBot(dI), bodyBot(k1)), zb + 0.05 * a1);
-    let ok = true; for (let k = dI + 1; k < NN; k++) if (C(k) < zb - 0.25 * a1) ok = false;
-    if (ok) out.push({ top: zt, bot: zb, kind: 1, t: T(dI), fl: false });
+    const zb = L(dI), zt = Math.max(bb3(dI), zb + 0.05 * a1);
+    let ok = true; for (let k = dI + 1; k < NN; k++) if (C(k) < zb - 0.25 * a1) { ok = false; break; }
+    if (ok) { fdem = { top: zt, bot: zb, kind: 1, t: T(dI), fl: false }; out.push(fdem); }
   }
   if (flips) {
-    const cl = C(NN - 1); const f = [];
-    for (const side of [0, 1]) {
-      const bk = side === 0 ? bkH : bkL; const kd = side === 0 ? 1 : -1;
-      for (let q = bk.length - 1; q >= 0; q--) {
-        const [pq, bi] = bk[q]; const k0 = Math.max(pq - 1, 0), k1 = Math.min(pq + 1, NN - 1);
-        let zt, zb, ok;
-        if (side === 0) {
-          zt = H(pq); zb = Math.min(Math.max(bodyTop(k0), bodyTop(pq), bodyTop(k1)), zt - 0.05 * a1);
-          ok = cl - zt <= 2 * a1;
-          for (let k = bi; k < NN; k++) if (C(k) < zb - 0.25 * a1) ok = false;
-        } else {
-          zb = L(pq); zt = Math.max(Math.min(bodyBot(k0), bodyBot(pq), bodyBot(k1)), zb + 0.05 * a1);
-          ok = zb - cl <= 2 * a1;
-          for (let k = bi; k < NN; k++) if (C(k) > zt + 0.25 * a1) ok = false;
-        }
-        if (ok && f.some(z => z.kind === kd && z.top >= zb && z.bot <= zt)) ok = false;
-        if (ok && out.some(z => z.kind === kd && z.top >= zb && z.bot <= zt)) ok = false;
-        if (f.filter(z => z.kind === kd).length >= 2) ok = false;
-        if (ok) { const z = { top: zt, bot: zb, kind: kd, t: T(pq), fl: true }; f.push(z); out.push(z); }
-      }
+    // current range of this timeframe: between its fresh supply and fresh demand.
+    // Where a side has no fresh zone (price already broke it), the nearest flipped zone on that side is shown.
+    const rHi = fsup ? fsup.top : Infinity, rLo = fdem ? fdem.bot : -Infinity;
+    const cl = C(NN - 1);
+    // broken swing highs -> demand; nearest one below price inside the range
+    let best = null;
+    for (let q = gH.length - 1; q >= 0; q--) {
+      const g = gH[q], p = g.p[0];
+      let zt = H(p); for (const m of g.p) if (Math.abs(H(m) - H(p)) <= a1 && H(m) > zt) zt = H(m);
+      const zb = Math.min(bt3(p), zt - 0.05 * a1);
+      if (p < NN - lookN || zb > cl || zb < rLo - 0.25 * a1 || zt > rHi) continue;
+      if (best && zt <= best.top) continue;   // nearest to price
+      if (fdem && fdem.top >= zb && fdem.bot <= zt) continue;
+      let ok = true; for (let k = g.i; k < NN; k++) if (C(k) < zb - 0.25 * a1) { ok = false; break; }
+      if (ok) best = { top: zt, bot: zb, kind: 1, t: T(p), fl: true };
     }
+    if (best) out.push(best);
+    // broken swing lows -> supply; nearest one above price inside the range
+    best = null;
+    for (let q = gL.length - 1; q >= 0; q--) {
+      const g = gL[q], p = g.p[0];
+      let zb = L(p); for (const m of g.p) if (Math.abs(L(m) - L(p)) <= a1 && L(m) < zb) zb = L(m);
+      const zt = Math.max(bb3(p), zb + 0.05 * a1);
+      if (p < NN - lookN || zt < cl || zt > rHi + 0.25 * a1 || zb < rLo) continue;
+      if (best && zb >= best.bot) continue;   // nearest to price
+      if (fsup && fsup.top >= zb && fsup.bot <= zt) continue;
+      let ok = true; for (let k = g.i; k < NN; k++) if (C(k) > zt + 0.25 * a1) { ok = false; break; }
+      if (ok) best = { top: zt, bot: zb, kind: -1, t: T(p), fl: true };
+    }
+    if (best) out.push(best);
   }
   return out;
 }
+
 
 // direction of the latest structure break: +1 = the last break was a close above a swing high, -1 = below a swing low
 function lastBreak(b, n = 2) {
@@ -130,7 +149,7 @@ function trend(b, n = 2) {
 }
 
 // all four timeframes, with the indicator's overlap rule (higher timeframe kept, tagged "also 4H")
-const TFS = [['W', { ext: true }], ['D', {}], ['4H', { flips: true }], ['1H', { flips: true }]];
+const TFS = [['W', { ext: true }], ['D', {}], ['4H', {}], ['1H', {}]];
 function allZones(bars) {        // bars = { W:[], D:[], '4H':[], '1H':[] }
   const zs = [];
   for (const [tf, o] of TFS) for (const z of structureZones(bars[tf] || [], o)) zs.push({ ...z, tf, also: [] });
