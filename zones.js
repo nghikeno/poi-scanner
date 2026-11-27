@@ -70,6 +70,26 @@ function structureZones(b, opt) {
     if (iD > iU && dI >= 0) { sI = dI; for (let k = dI; k <= iD; k++) if (H(k) > H(sI)) sI = k; }
     else if (iU > iD && sI >= 0) { dI = sI; for (let k = sI; k <= iU; k++) if (L(k) < L(dI)) dI = k; }
   }
+  // a candle CLOSED beyond the swing of a fresh zone, but within the 0.25 ATR allowance: the zone moves to the new
+  // extreme reached from that close on (range high / low) and the opposite zone to the start of that move
+  if (sI >= 0) {
+    let f = -1, okR = true;
+    for (let k = sI + 1; k < NN; k++) { if (C(k) > H(sI) && f < 0) f = k; if (C(k) > H(sI) + 0.25 * a1) okR = false; }
+    if (f >= 0 && okR) {
+      let m = f; for (let k = f; k < NN; k++) if (H(k) > H(m)) m = k;
+      sI = m;
+      for (let k = f; k >= 2; k--) if (L(k) < L(k - 1) && L(k) < L(k - 2)) { dI = k; break; }
+    }
+  }
+  if (dI >= 0) {
+    let f = -1, okR = true;
+    for (let k = dI + 1; k < NN; k++) { if (C(k) < L(dI) && f < 0) f = k; if (C(k) < L(dI) - 0.25 * a1) okR = false; }
+    if (f >= 0 && okR) {
+      let m = f; for (let k = f; k < NN; k++) if (L(k) < L(m)) m = k;
+      dI = m;
+      for (let k = f; k >= 2; k--) if (H(k) > H(k - 1) && H(k) > H(k - 2)) { sI = k; break; }
+    }
+  }
   const bodyTop = k => Math.max(O(k), C(k)), bodyBot = k => Math.min(O(k), C(k));
   const bt3 = k => Math.max(bodyTop(Math.max(k - 1, 0)), bodyTop(k), bodyTop(Math.min(k + 1, NN - 1)));
   const bb3 = k => Math.min(bodyBot(Math.max(k - 1, 0)), bodyBot(k), bodyBot(Math.min(k + 1, NN - 1)));
@@ -101,7 +121,7 @@ function structureZones(b, opt) {
       let ok = true; for (let k = g.i; k < NN; k++) if (C(k) < zb - 0.25 * a1) { ok = false; break; }
       if (ok) best = { top: zt, bot: zb, kind: 1, t: T(p), fl: true };
     }
-    if (best) out.push(best);
+    const bestD = best;
     // broken swing lows -> supply; nearest one above price inside the range
     best = null;
     for (let q = gL.length - 1; q >= 0; q--) {
@@ -114,7 +134,10 @@ function structureZones(b, opt) {
       let ok = true; for (let k = g.i; k < NN; k++) if (C(k) > zt + 0.25 * a1) { ok = false; break; }
       if (ok) best = { top: zt, bot: zb, kind: -1, t: T(p), fl: true };
     }
-    if (best) out.push(best);
+    // a flipped demand and a flipped supply on top of each other contradict: show neither
+    const clash = bestD && best && bestD.top >= best.bot && bestD.bot <= best.top;
+    if (bestD && !clash) out.push(bestD);
+    if (best && !clash) out.push(best);
   }
   return out;
 }
