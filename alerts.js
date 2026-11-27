@@ -1,4 +1,4 @@
-// Alert rules: APPROACHING, TOUCH, W / M COMPLETE, ZONE BROKEN.
+// Alert rules: APPROACHING, TOUCH, W / M COMPLETE, ZONE BROKEN (W / D / 4H). 1H zones: TOUCH only.
 'use strict';
 const { atr, trend } = require('./zones.js');
 
@@ -63,7 +63,7 @@ function check(bars, zones, st, now) {
     const touched = lo <= z.top && hi >= z.bot;
     const quiet = now - (s.last || 0) < COOLDOWN;
     if (dNow > RESET * near) { s.near = false; s.touch = 0; s.wm = 0; }       // price left: the next visit is new
-    if (!s.near && !touched && dNow > 0 && dNow <= near) { s.near = true; if (!quiet) { s.last = now; ev.push({ type: 'near', z, price, d: dNow }); } }
+    if (!s.near && !touched && dNow > 0 && dNow <= near) { s.near = true; if (!quiet && z.tf !== '1H') { s.last = now; ev.push({ type: 'near', z, price, d: dNow }); } }
     if (!s.touch && touched) {
       s.near = true;
       const fb = recent.find(b => b[3] <= z.top && b[2] >= z.bot);
@@ -71,7 +71,7 @@ function check(bars, zones, st, now) {
       if (!quiet || !s.touchSent) { s.last = now; s.touchSent = true; ev.push({ type: 'touch', z, price }); }
     }
     if (dNow > RESET * near) s.touchSent = false;
-    if (s.touch && !s.wm) {
+    if (s.touch && !s.wm && z.tf !== '1H') {   // 1H zones: TOUCH alert only
       const E = bars[ENTRY_TF[z.tf]];
       if (E && E.length > 20) {
         const r = wm(z, E, s.touch, 0.25 * atr(E));
@@ -88,9 +88,9 @@ function check(bars, zones, st, now) {
     }
     cur[id] = { ...s, top: z.top, bot: z.bot, kind: z.kind, tf: z.tf, fl: z.fl, t: z.t, seen: now };
   }
-  // fresh Weekly / Daily / 4H / 1H zones that disappeared because a candle closed through them
+  // fresh Weekly / Daily / 4H zones that disappeared because a candle closed through them
   for (const [id, s] of Object.entries(cur)) {
-    if (ids.has(id) || s.broken || s.fl || s.seen !== st.lastRun) continue;
+    if (ids.has(id) || s.broken || s.fl || s.tf === '1H' || s.seen !== st.lastRun) continue;
     const Z = bars[s.tf]; const c = Z && Z.length ? Z[Z.length - 1][4] : price;
     if ((s.kind === 1 && c < s.bot) || (s.kind === -1 && c > s.top)) { s.broken = true; ev.push({ type: 'broken', z: s, price: c }); }
   }
